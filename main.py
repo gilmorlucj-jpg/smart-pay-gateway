@@ -1,12 +1,11 @@
 import uuid
 import urllib.parse
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 app = FastAPI(title="SmartLotto Pay Gateway")
 
-# Временное хранилище платежей (в продакшене при больших объемах можно подключить SQLite или Redis)
 payments_db = {}
 
 class CreatePaymentRequest(BaseModel):
@@ -14,21 +13,13 @@ class CreatePaymentRequest(BaseModel):
 
 @app.post("/api/create-payment")
 def create_payment(data: CreatePaymentRequest):
-    """
-    Принимает сырую строку QR (ST00012...) и отдаёт короткую HTTPS-ссылку
-    """
     raw_text = data.qr_text
-    
     if not raw_text.startswith("ST000"):
         raise HTTPException(status_code=400, detail="Неверный формат строки. Ожидается ST000...")
 
-    # Генерируем короткий уникальный ID для ссылки
     payment_id = str(uuid.uuid4())[:8]
-    
-    # Сохраняем строку в память
     payments_db[payment_id] = raw_text
     
-    # Возвращаем готовую ссылку под ваш субдомен
     return {
         "payment_id": payment_id,
         "pay_url": f"https://pay.smartlotto.tech/pay/{payment_id}"
@@ -36,29 +27,20 @@ def create_payment(data: CreatePaymentRequest):
 
 @app.get("/pay/{payment_id}", response_class=HTMLResponse)
 def render_pay_page(payment_id: str):
-    """
-    Отрисовывает мобильную страницу с кнопками банков при переходе по короткой ссылке
-    """
     raw_text = payments_db.get(payment_id)
     if not raw_text:
-        return HTMLResponse(content="<h2 style='text-align:center;margin-top:50px;'>Ошибка: Платеж не найден или ссылка устарела</h2>", status_code=404)
+        return HTMLResponse(content="<h2 style='text-align:center;margin-top:50px;color:white;'>Ошибка: Платеж не найден</h2>", status_code=404)
 
-    # URL-кодирование исходной строки ГОСТ для диплинков
-    encoded_data = urllib.parse.quote(raw_text)
+    # Используем официальный шлюз редиректа НСПК (СБП), который идеально парсит любые строки ГОСТ
+    nspb_pay_url = f"https://qr.nspb.ru/2?{urllib.parse.urlencode({'data': raw_text})}"
 
-    # Формируем диплинки под основные банки
-    sber_link = f"sberbankonline://qr?data={encoded_data}"
-    tinkoff_link = f"tinkoffbank://pay/qr?qr={encoded_data}"
-    alfa_link = f"alfabank://pay?qr={encoded_data}"
-
-    # HTML-страница адаптивного дизайна для смартфонов
     html_content = f"""
     <!DOCTYPE html>
     <html lang="ru">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>SmartLotto Pay — Оплата заказа</title>
+        <title>SmartLotto Pay — Оплата</title>
         <style>
             body {{
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -88,30 +70,25 @@ def render_pay_page(payment_id: str):
                 align-items: center;
                 justify-content: center;
                 width: 100%;
-                padding: 15px 0;
-                margin-bottom: 12px;
+                padding: 16px 0;
                 border-radius: 12px;
                 text-decoration: none;
                 font-weight: 600;
                 font-size: 16px;
                 color: white;
+                background-color: #2563eb;
                 box-sizing: border-box;
                 transition: transform 0.1s ease;
             }}
             .btn:active {{ transform: scale(0.98); }}
-            .btn-sber {{ background-color: #21a038; }}
-            .btn-tinkoff {{ background-color: #ffdd2d; color: #000; }}
-            .btn-alfa {{ background-color: #ef3124; }}
         </style>
     </head>
     <body>
         <div class="card">
             <h2>SmartLotto Pay</h2>
-            <p>Выберите ваш банк для быстрого перехода в приложение:</p>
+            <p>Нажмите кнопку ниже для безопасной оплаты через Систему быстрых платежей:</p>
             
-            <a href="{sber_link}" class="btn btn-sber">СберБанк</a>
-            <a href="{tinkoff_link}" class="btn btn-tinkoff">Т-Банк</a>
-            <a href="{alfa_link}" class="btn btn-alfa">Альфа-Банк</a>
+            <a href="{nspb_pay_url}" class="btn">Оплатить через СБП</a>
         </div>
     </body>
     </html>
