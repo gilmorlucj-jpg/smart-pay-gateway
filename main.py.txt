@@ -1,0 +1,119 @@
+import uuid
+import urllib.parse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+
+app = FastAPI(title="SmartLotto Pay Gateway")
+
+# Временное хранилище платежей (в продакшене при больших объемах можно подключить SQLite или Redis)
+payments_db = {}
+
+class CreatePaymentRequest(BaseModel):
+    qr_text: str
+
+@app.post("/api/create-payment")
+def create_payment(data: CreatePaymentRequest):
+    """
+    Принимает сырую строку QR (ST00012...) и отдаёт короткую HTTPS-ссылку
+    """
+    raw_text = data.qr_text
+    
+    if not raw_text.startswith("ST000"):
+        raise HTTPException(status_code=400, detail="Неверный формат строки. Ожидается ST000...")
+
+    # Генерируем короткий уникальный ID для ссылки
+    payment_id = str(uuid.uuid4())[:8]
+    
+    # Сохраняем строку в память
+    payments_db[payment_id] = raw_text
+    
+    # Возвращаем готовую ссылку под ваш субдомен
+    return {
+        "payment_id": payment_id,
+        "pay_url": f"https://pay.smartlotto.tech/pay/{payment_id}"
+    }
+
+@app.get("/pay/{payment_id}", response_class=HTMLResponse)
+def render_pay_page(payment_id: str):
+    """
+    Отрисовывает мобильную страницу с кнопками банков при переходе по короткой ссылке
+    """
+    raw_text = payments_db.get(payment_id)
+    if not raw_text:
+        return HTMLResponse(content="<h2 style='text-align:center;margin-top:50px;'>Ошибка: Платеж не найден или ссылка устарела</h2>", status_code=404)
+
+    # URL-кодирование исходной строки ГОСТ для диплинков
+    encoded_data = urllib.parse.quote(raw_text)
+
+    # Формируем диплинки под основные банки
+    sber_link = f"sberbankonline://qr?data={encoded_data}"
+    tinkoff_link = f"tinkoffbank://pay/qr?qr={encoded_data}"
+    alfa_link = f"alfabank://pay?qr={encoded_data}"
+
+    # HTML-страница адаптивного дизайна для смартфонов
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>SmartLotto Pay — Оплата заказа</title>
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background-color: #0f172a;
+                color: #fff;
+                margin: 0;
+                padding: 20px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 90vh;
+            }}
+            .card {{
+                background: #1e293b;
+                padding: 28px;
+                border-radius: 20px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                width: 100%;
+                max-width: 360px;
+                text-align: center;
+                border: 1px solid #334155;
+            }}
+            h2 {{ margin-top: 0; font-size: 22px; color: #f8fafc; }}
+            p {{ color: #94a3b8; font-size: 14px; margin-bottom: 24px; }}
+            .btn {{
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 100%;
+                padding: 15px 0;
+                margin-bottom: 12px;
+                border-radius: 12px;
+                text-decoration: none;
+                font-weight: 600;
+                font-size: 16px;
+                color: white;
+                box-sizing: border-box;
+                transition: transform 0.1s ease;
+            }}
+            .btn:active {{ transform: scale(0.98); }}
+            .btn-sber {{ background-color: #21a038; }}
+            .btn-tinkoff {{ background-color: #ffdd2d; color: #000; }}
+            .btn-alfa {{ background-color: #ef3124; }}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>SmartLotto Pay</h2>
+            <p>Выберите ваш банк для быстрого перехода в приложение:</p>
+            
+            <a href="{sber_link}" class="btn btn-sber">СберБанк</a>
+            <a href="{tinkoff_link}" class="btn btn-tinkoff">Т-Банк</a>
+            <a href="{alfa_link}" class="btn btn-alfa">Альфа-Банк</a>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
