@@ -31,8 +31,9 @@ def render_pay_page(payment_id: str):
     if not raw_text:
         return HTMLResponse(content="<h2 style='text-align:center;margin-top:50px;color:white;'>Ошибка: Платеж не найден</h2>", status_code=404)
 
-    # Используем официальный шлюз редиректа НСПК (СБП), который идеально парсит любые строки ГОСТ
-    nspb_pay_url = f"https://qr.nspb.ru/2?{urllib.parse.urlencode({'data': raw_text})}"
+    # Для СберБанка кодируем только спецсимволы и пробелы, сохраняя структуру ключей
+    encoded_gost = urllib.parse.quote(raw_text, safe='|=')
+    sber_deeplink = f"sberbankonline://qr?data={encoded_gost}"
 
     html_content = f"""
     <!DOCTYPE html>
@@ -76,20 +77,39 @@ def render_pay_page(payment_id: str):
                 font-weight: 600;
                 font-size: 16px;
                 color: white;
-                background-color: #2563eb;
                 box-sizing: border-box;
-                transition: transform 0.1s ease;
+                margin-bottom: 12px;
+                cursor: pointer;
+                border: none;
             }}
+            .btn-sber {{ background-color: #21a038; }}
+            .btn-copy {{ background-color: #334155; color: #cbd5e1; }}
             .btn:active {{ transform: scale(0.98); }}
         </style>
     </head>
     <body>
         <div class="card">
             <h2>SmartLotto Pay</h2>
-            <p>Нажмите кнопку ниже для безопасной оплаты через Систему быстрых платежей:</p>
+            <p>Выберите способ оплаты:</p>
             
-            <a href="{nspb_pay_url}" class="btn">Оплатить через СБП</a>
+            <a href="{sber_deeplink}" class="btn btn-sber">Открыть СберБанк</a>
+            <button onclick="copyToClipboard()" class="btn btn-copy" id="copyBtn">Скопировать код QR</button>
         </div>
+
+        <script>
+            function copyToClipboard() {{
+                const text = {repr(raw_text)};
+                navigator.clipboard.writeText(text).then(() => {{
+                    const btn = document.getElementById('copyBtn');
+                    btn.innerText = 'Скопировано!';
+                    btn.style.backgroundColor = '#475569';
+                    setTimeout(() => {{
+                        btn.innerText = 'Скопировать код QR';
+                        btn.style.backgroundColor = '#334155';
+                    }}, 2000);
+                }});
+            }}
+        </script>
     </body>
     </html>
     """
